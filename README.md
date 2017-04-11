@@ -10,6 +10,8 @@ When building the bottom-up lstm tree of question, I refer to some basic data pr
 
 Every module has a ``main`` method and you can run it to check the result.
 
+For debugging, I set some constraints in ``load_data.py``, you can see related information at the first line of the module.
+
 ## Prerequisites
 1. python3.6
 2. tensorflow 1.0.1
