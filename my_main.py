@@ -28,6 +28,8 @@ class Config(object):
     word2idx=None
 
 def train(restore=False):
+    gpu_config=tf.ConfigProto()
+    gpu_config.gpu_options.allow_growth=True
     config=Config()
     logging.basicConfig(filename="logger.log",level=logging.WARNING)
     data,word2idx,embedding=load_data.load_squad_data()
@@ -51,11 +53,7 @@ def train(restore=False):
         sess.run(init)
         start_time=time.time()
         if restore:saver.restore(sess,'./ckpt/tree_rnn_weights')
-        bp_states,td_states=model.train(train,sess)
-        logging.warn('final_bp_states:{}'.format(bp_states))
-        logging.warn('final_bp_states_shape:{}'.format(bp_states.shape))
-        logging.warn('final_td_states:{}'.format(td_states))
-        logging.warn('final_td_states_shape:{}'.format(td_states.shape))
+        nodes_states=model.train(train,sess)
                     
 if __name__ == '__main__':
     if len(sys.argv) > 1:

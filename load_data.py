@@ -1,4 +1,4 @@
-#Attention!!!!! prepro_each only return the first 5 datas for debugging
+#Attention!!!!! prepro_each only return the first paragraph of the first article for debugging, you can modify the `prepro_each` function according to corresponding comment.
 
 from tqdm import tqdm
 import json
@@ -77,7 +77,9 @@ def prepro_each(args, data_type):
     word_counter=Counter()
     #lower_word_counter=Counter()
     retdata=[]
+    #remove the slice operation to get the complete dateset
     for ai, article in enumerate(tqdm(source_data['data'][0:1])):
+        #remove the slice operation to get the complete dataset
         for pi, para in enumerate(article['paragraphs'][0:1]):
             context=para['context'].replace("''", '" ').replace("``", '" ')
             xi=list(map(word_tokenize,nltk.sent_tokenize(context)))

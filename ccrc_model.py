@@ -14,6 +14,7 @@ class my_model(object):
         shuffle(data_idxs)
         for i in range(0, len(data)):
             cur_data=data[i]
+            pass
             #TO DO:input_c, tree_c, input_a, tree_a
             #input,treestr,t_input, t_treestr,t_par_leaf=load_data.extract_filled_tree(cur_data,self.config.maxnodesize)
 
@@ -37,12 +38,12 @@ class bi_tree_lstm(object):
         self.bp_lstm=bottom_up_lstm(config)
         self.td_lstm=top_down_lstm(config,self.bp_lstm)
         #[batch_size,cur_node_num,hidden_value]
-        self.bp_states=self.bp_lstm.states
+        self.bp_states_h=self.bp_lstm.states_h
         #logging.warn('the bp_states:'.format(bp_states.shape))
         #logging.warn('shape finished')
-        self.td_states=self.td_lstm.states
+        self.td_states_h=self.td_lstm.states_h
         self.config=config
-        self.nodes_states=self.get_tree_states(self.bp_states, self.td_states)
+        self.nodes_states=self.get_tree_states(self.bp_states_h, self.td_states_h)
 
     def train(self,data,sess):
         #data has no batch
@@ -54,13 +55,11 @@ class bi_tree_lstm(object):
             feed={self.bp_lstm.input:b_input, self.bp_lstm.treestr:b_treestr, 
                 self.td_lstm.t_input:t_input, self.td_lstm.t_treestr:t_treestr, self.td_lstm.t_par_leaf:t_parent, 
                 self.bp_lstm.dropout:self.config.dropout, self.td_lstm.dropout:self.config.dropout}
-            bp_states,td_states=sess.run([self.bp_states, self.td_states],feed_dict=feed)
+            nodes_states=sess.run(self.nodes_states,feed_dict=feed)
             logging.warn('curidx:{}'.format(curidx))
-            logging.warn('bp_states:{}'.format(bp_states))
-            logging.warn('bp_states_shape:{}'.format(bp_states.shape))
-            logging.warn('td_states:{}'.format(td_states))
-            logging.warn('td_states_shape:{}'.format(td_states.shape))
-        return bp_states,td_states
+            logging.warn('nodes_states:{}'.format(nodes_states))
+            logging.warn('nodes_states_shape:{}'.format(nodes_states.shape))
+        return nodes_states
         #states: [batch_num, nodes_num, hidden_dim]
     def get_tree_states(self, bp_states, td_states):
         #bp_states[nodesize * hidden_dim]
@@ -74,14 +73,15 @@ class top_down_lstm(object):
         self.hidden_dim=config.hidden_dim
         self.num_emb=config.num_emb
         self.config=config        
-        self.nodes_hs=bp_lstm.states
+        self.nodes_hs=bp_lstm.states_h
+        self.nodes_cs=bp_lstm.states_c
         self.reg=config.reg
         self.degree=config.degree
         self.add_placeholders()
         emb_leaves = self.add_embedding()
         self.add_more_variables()
-        self.states=self.compute_states(emb_leaves)
-        self.states=tf.reshape(self.states,[self.n_inodes+self.num_leaves, self.hidden_dim])
+        self.states_h=self.compute_states(emb_leaves)
+        self.states_h=tf.reshape(self.states_h,[self.n_inodes+self.num_leaves, self.hidden_dim])
     def add_embedding(self):
         with tf.variable_scope("Embed",reuse=True):
             #emb_tree [maxnodesize, emb_dim] 
@@ -162,12 +162,14 @@ class top_down_lstm(object):
     def compute_inodes_states(self):
         n_inodes = self.n_inodes
         t_treestr=tf.gather(self.t_treestr,tf.range(n_inodes))
-        node_states = self.nodes_hs
         #node_states [inode_size, dim_hidden]
-        root_state=tf.gather(node_states,tf.subtract(tf.gather(tf.shape(node_states),0),1))
+        root_state=tf.gather(self.nodes_hs,tf.subtract(tf.gather(tf.shape(self.nodes_hs),0),1))
+        root_cell=tf.gather(self.nodes_cs,tf.subtract(tf.gather(tf.shape(self.nodes_cs),0),1))
+        
         root_state=tf.expand_dims(root_state,0)
+        root_cell=tf.expand_dims(root_cell,0)
         inode_h=tf.identity(root_state)
-        inode_c=tf.identity(root_state)
+        inode_c=tf.identity(root_cell)
         idx_var=tf.constant(1)
         with tf.variable_scope('td_Composition',reuse=True):
             cW=tf.get_variable('cW',[self.hidden_dim+self.emb_dim,4*self.hidden_dim])
@@ -209,8 +211,9 @@ class bottom_up_lstm(object):
         #maxnodesize * emb_dim
         emb_leaves = self.add_embedding()
         self.add_model_variables()
-        self.states = self.compute_states(emb_leaves)
-        self.states=tf.reshape(self.states,[self.n_inodes+self.num_leaves, self.hidden_dim])
+        self.states_h, self.states_c = self.compute_states(emb_leaves)
+        self.states_h=tf.reshape(self.states_h,[self.n_inodes+self.num_leaves, self.hidden_dim])
+        self.states_c=tf.reshape(self.states_c,[self.n_inodes+self.num_leaves, self.hidden_dim])
         #[node_num ,hidden_value]
         #batch_states A tensor list: [batch_size, cur_node_num, hidden_value] node_num: include leaves and internal nodes
 
@@ -331,7 +334,7 @@ class bottom_up_lstm(object):
             loop_vars=[nodes_h,nodes_c,idx_var]
             nodes_h,nodes_c,idx_var=tf.while_loop(loop_cond, _recurrence,
                                                 loop_vars,parallel_iterations=10)
-            return nodes_h
+            return nodes_h,nodes_c
         #[node_num ,hidden_value]
     def add_training_op(self):
         pass
