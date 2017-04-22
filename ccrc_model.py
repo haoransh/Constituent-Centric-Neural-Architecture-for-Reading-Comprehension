@@ -3,341 +3,201 @@ import tensorflow as tf
 import os
 import logging
 import load_data
-class my_model(object):
-    # TO DO combine the whole ct_lstm architecture
-    def __init__(self,config):
-        self.bi_tree=bi_tree_lstm(config)
-    
-    def train(self,config,sess):
-        from random import shuffle
-        data_idxs=range(len(data))
-        shuffle(data_idxs)
-        for i in range(0, len(data)):
-            cur_data=data[i]
-            pass
-            #TO DO:input_c, tree_c, input_a, tree_a
-            #input,treestr,t_input, t_treestr,t_par_leaf=load_data.extract_filled_tree(cur_data,self.config.maxnodesize)
+import tensorflow as tf
+from tensorflow.contrib import rnn
+from tensorflow.contrib import seq2seq
+from tensorflow.contrib import legacy_seq2seq
+from question_encoding import *
+from context_encoding import *
+class ccrc_model(object):
+    #Here I assume that 
+    #the output size of LSTM unit used in the answer generation step is config.hidden_dim
 
-            #feed_bt={self.bp_lstm.input: input,
-            #self.bp_lstm.treestr: treestr,self.bp_lstm.dropout:self.config.dropout,self.bp_lstm.batch_len:len(input_q)}
-            #A tensor list: batch_size, cur_node_num, hidden_value]
-            #bottom_up_states
-            #top_down_states
-
-            #notice that the index of bp_states is the reverse of td_states 
-            #TO DO: feed root_state to the top_down_lstm to get the top_down hidden values
-            #feed passage 
-            #feed answers
-            #calculate loss 
-class chain_lstm(object):
-    pass
-
-class bi_tree_lstm(object):
-    def __init__(self,config):
-        logging.basicConfig(filename="logger.log",level=logging.WARNING)
-        self.bp_lstm=bottom_up_lstm(config)
-        self.td_lstm=top_down_lstm(config,self.bp_lstm)
-        #[batch_size,cur_node_num,hidden_value]
-        self.bp_states_h=self.bp_lstm.states_h
-        #logging.warn('the bp_states:'.format(bp_states.shape))
-        #logging.warn('shape finished')
-        self.td_states_h=self.td_lstm.states_h
+    def __init__(self, config):
+        self.q_encoding=question_encoding(config)
+        self.c_encoding=context_encoding(config)
         self.config=config
-        self.nodes_states=self.get_tree_states(self.bp_states_h, self.td_states_h)
-
+        ##to do list
+        self.att_layer=attentioned_layer(self.q_encoding, self.c_encoding)
+        #self.max_candidate_answers=config.max_candidate_answers
+        #self.answer_generation=answer_genaration() #need Tensors from q_encoding, c_endoing, att_layer
+        self.projection_input_dim=config.hidden_dim
+        #predictions=self.answer_generation.predicted_list
+        #answer=self.answer_generation.correct_answer
+        self.add_variables()
+        #self.loss=self.get_loss(predictions,answer)
+        #self.train_op=self.add_training_op()
     def train(self,data,sess):
         #data has no batch
+        #the candidate answer constituency should be processed before feed
         logging.warn('data length:{}'.format(len(data)))
         for curidx in range(len(data)):
-            batch_data=data[curidx][0]
-            #batch_data is the root of the tree
-            b_input, b_treestr, t_input, t_treestr, t_parent=load_data.extract_filled_tree(batch_data,self.config.maxnodesize,word2idx=self.config.word2idx)
-            feed={self.bp_lstm.input:b_input, self.bp_lstm.treestr:b_treestr, 
-                self.td_lstm.t_input:t_input, self.td_lstm.t_treestr:t_treestr, self.td_lstm.t_par_leaf:t_parent, 
-                self.bp_lstm.dropout:self.config.dropout, self.td_lstm.dropout:self.config.dropout}
+            question_data=data[curidx][0]
+            answer_data=data[curidx][1][0] #consider that in train dataset, there is only one ground-truth answer for each question.
+            context_data=data[curidx][2]
+            #context_data is the list of root of sentences
+            b_input, b_treestr, t_input, t_treestr, t_parent=load_data.extract_filled_tree(question_data,self.config.maxnodesize,word2idx=self.config.word2idx)
+            c_inputs,c_treestrs. c_t_inputs,c_t_treestrs,c_t_parents=[],[],[],[],[]
+            for i in range(len(context_data)):
+                c_input,c_treestr,c_t_input,c_t_treestr, c_t_parent=load_data.extract_filled_tree(context_data[i], self.config,maxnodesize, word2idx=self.word2idx)
+                c_inputs.append(c_input)
+                c_treestrs.append(c_treestr)
+                c_t_inputs.append(c_t_input)
+                c_t_treestrs.append(c_t_treestr)
+                c_t_parents.append(c_t_parent)
+
+            feed={
+                self.q_encoding.bp_lstm.input:b_input,
+                self.q_encoding.bp_lstm.treestr:b_treestr, 
+                self.q_encoding.td_lstm.t_input:t_input, 
+                self.q_encoding.td_lstm.t_treestr:t_treestr, 
+                self.q_encoding.td_lstm.t_par_leaf:t_parent, 
+                self.q_encoding.bp_lstm.dropout:self.config.dropout, 
+                self.q_encoding.td_lstm.dropout:self.config.dropout,
+
+                self.c_encoding.c_bp_lstm.sentence_num:sentence_num, 
+                self.c_encoding.c_bp_lstm.input:c_inputs, 
+                self.c.encoding.c_bp_lstm.treestr:c_treestrs, 
+                self.c_encoding.c_bp_lstm.dropout:self.config.dropout,
+                self.c_encoding.c_td_lstm.t_input:c_t_inputs,
+                self.c_encoding.c_td_lstm.t_treestr:c_t_treestrs,
+                self.c_encoding.c_td_lstm.t_par_leaf:c_t_parents,
+                self.c_encoding.c_td_lstm.dropout:self.config.dropout
+                }
             nodes_states=sess.run(self.nodes_states,feed_dict=feed)
             logging.warn('curidx:{}'.format(curidx))
             logging.warn('nodes_states:{}'.format(nodes_states))
             logging.warn('nodes_states_shape:{}'.format(nodes_states.shape))
         return nodes_states
-        #states: [batch_num, nodes_num, hidden_dim]
-    def get_tree_states(self, bp_states, td_states):
-        #bp_states[nodesize * hidden_dim]
-        rev_td_states=tf.reverse(td_states,axis=[0])
-        states=tf.concat(values=[bp_states, rev_td_states],axis=1)
-        return states
-        
-class top_down_lstm(object):
-    def __init__(self,config,bp_lstm):
-        self.emb_dim=config.emb_dim
-        self.hidden_dim=config.hidden_dim
-        self.num_emb=config.num_emb
-        self.config=config        
-        self.nodes_hs=bp_lstm.states_h
-        self.nodes_cs=bp_lstm.states_c
-        self.reg=config.reg
-        self.degree=config.degree
-        self.add_placeholders()
-        emb_leaves = self.add_embedding()
-        self.add_more_variables()
-        self.states_h=self.compute_states(emb_leaves)
-        self.states_h=tf.reshape(self.states_h,[self.n_inodes+self.num_leaves, self.hidden_dim])
-    def add_embedding(self):
-        with tf.variable_scope("Embed",reuse=True):
-            #emb_tree [maxnodesize, emb_dim] 
-            #multiplier: [maxnodesize * 1 ]
-            embedding=tf.get_variable('embedding')
-            tix=tf.to_int32(tf.not_equal(self.t_input,-1))*self.t_input
-            emb_tree=tf.nn.embedding_lookup(embedding, tix)
-            emb_tree=emb_tree*(tf.expand_dims(
-                        tf.to_float(tf.not_equal(self.t_input,-1)),1))
-            return emb_tree
-    def add_placeholders(self):
-        dim2=self.config.maxnodesize
-        dim3=self.hidden_dim
-        self.t_input=tf.placeholder(tf.int32,[dim2],name='td_input')
-        self.t_treestr = tf.placeholder(tf.int32,[dim2],name='td_tree')
-        self.t_par_leaf = tf.placeholder(tf.int32,[dim2],name='td_par_leaf')
-
-        self.dropout = tf.placeholder(tf.float32,name='td_dropout')
-        self.num_leaves = tf.reduce_sum(tf.to_int32(tf.not_equal(self.t_input,-1)),[0])
-        self.n_inodes = tf.reduce_sum(tf.to_int32(tf.not_equal(self.t_treestr,-1)),[0])
-        self.n_inodes =tf.add(self.n_inodes,1) #consider the parent of root is -1
-    def add_more_variables(self):
-        with tf.variable_scope('td_Composition',initializer=tf.contrib.layers.xavier_initializer(),  \
-            regularizer=tf.contrib.layers.l2_regularizer(self.config.reg)):
-            #hidden states and cell states of parents
-            cW = tf.get_variable("cW",[self.hidden_dim+self.emb_dim,4*self.hidden_dim],initializer=tf.random_uniform_initializer(-self.calc_wt_init(self.hidden_dim),self.calc_wt_init(self.hidden_dim)))
-            cb = tf.get_variable("cb",[4*self.hidden_dim],initializer=tf.constant_initializer(0.0),regularizer=tf.contrib.layers.l2_regularizer(0.0))
-    def calc_wt_init(self,fan_in=300):
-        eps=1.0/np.sqrt(fan_in)
-        return eps
-    def compute_states(self,emb_leaves):
-        inodes_h, inodes_c=self.compute_inodes_states()
-        nodes_h,nodes_c=self.process_leafs(inodes_h, inodes_c, emb_leaves)
-        logging.warn('process leaves done')
-  
-        return nodes_h
-
-    def process_leafs(self,inodes_h,inodes_c,emb_leaves):
-        num_leaves = self.num_leaves
-        embx=tf.gather(emb_leaves,tf.range(num_leaves))
-        leaf_parent=tf.gather(self.t_par_leaf,tf.range(num_leaves))
-        node_h=tf.identity(inodes_h)
-        node_c=tf.identity(inodes_c)
-        with tf.variable_scope('td_Composition',reuse=True):
-            cW=tf.get_variable('cW',[self.hidden_dim+self.emb_dim,4*self.hidden_dim])
-            cb=tf.get_variable('cb',[4*self.hidden_dim])
-            bu,bo,bi,bf=tf.split(axis=0,num_or_size_splits=4,value=cb)
-            idx_var=tf.constant(0)
-            logging.warn('begin enumerate the idx_var')
-            def _recurceleaf(node_h, node_c,idx_var):
-                node_info=tf.gather(leaf_parent, idx_var)
-                cur_embed=tf.gather(embx, idx_var)
-                #initial node_h:[inode_size, dim_hidden]
-                parent_h=tf.gather(node_h, node_info)
-                parent_c=tf.gather(node_c, node_info)
-                cur_input=tf.concat(values=[parent_h, cur_embed],axis=0)
-                flat_=tf.reshape(cur_input, [-1])
-
-                tmp=tf.matmul(tf.expand_dims(flat_,0),cW)
-
-                u,o,i,f=tf.split(axis=1,num_or_size_splits=4,value=tmp)
-                i=tf.nn.sigmoid(i+bi)
-                o=tf.nn.sigmoid(o+bo)
-                u=tf.nn.sigmoid(u+bu)
-                f=tf.nn.sigmoid(f+bf)
-                c=i*u+tf.reduce_sum(f*parent_c,[0])
-                h=o*tf.nn.tanh(c)
-
-                node_h=tf.concat(axis=0,values=[node_h,h])
-                node_c=tf.concat(axis=0,values=[node_c,c])
-                idx_var=tf.add(idx_var,1)
-                return node_h, node_c, idx_var
-            loop_cond=lambda a1,b1,idx_var:tf.less(idx_var,num_leaves)
-            loop_vars=[node_h,node_c,idx_var]
-            node_h,node_c,idx_var=tf.while_loop(loop_cond, _recurceleaf,loop_vars,shape_invariants=[tf.TensorShape([None,self.hidden_dim]),tf.TensorShape([None,self.hidden_dim]),idx_var.get_shape()])
-            logging.warn('return new node_h, finished')
-            return node_h,node_c
-    def compute_inodes_states(self):
-        n_inodes = self.n_inodes
-        t_treestr=tf.gather(self.t_treestr,tf.range(n_inodes))
-        #node_states [inode_size, dim_hidden]
-        root_state=tf.gather(self.nodes_hs,tf.subtract(tf.gather(tf.shape(self.nodes_hs),0),1))
-        root_cell=tf.gather(self.nodes_cs,tf.subtract(tf.gather(tf.shape(self.nodes_cs),0),1))
-        
-        root_state=tf.expand_dims(root_state,0)
-        root_cell=tf.expand_dims(root_cell,0)
-        inode_h=tf.identity(root_state)
-        inode_c=tf.identity(root_cell)
-        idx_var=tf.constant(1)
-        with tf.variable_scope('td_Composition',reuse=True):
-            cW=tf.get_variable('cW',[self.hidden_dim+self.emb_dim,4*self.hidden_dim])
-            cW,_=tf.split(value=cW,num_or_size_splits=[self.hidden_dim, self.emb_dim],axis=0)
-            cb=tf.get_variable('cb',[4*self.hidden_dim])
-            bu, bo, bi, bf=tf.split(axis=0,num_or_size_splits=4,value=cb)
-            def _recurrence(node_h,node_c,idx_var):
-                node_info=tf.gather(t_treestr, idx_var) #get t_idx, the index of parent
-                parent_h=tf.gather(node_h, node_info)
-                parent_c=tf.gather(node_c, node_info)
-
-                flat_=tf.reshape(parent_h, [-1])
-                tmp=tf.matmul(tf.expand_dims(flat_,0),cW)
-                u,o,i,f=tf.split(axis=1,num_or_size_splits=4,value=tmp)
-                i=tf.nn.sigmoid(i+bi)
-                o=tf.nn.sigmoid(o+bo)
-                u=tf.nn.sigmoid(u+bu)
-                f=tf.nn.sigmoid(f+bf)
-                c=i*u+tf.reduce_sum(f*parent_c,[0])
-                h=o*tf.nn.tanh(c)
-                node_h=tf.concat(axis=0,values=[node_h,h])
-                node_c=tf.concat(axis=0,values=[node_c,c])
-                idx_var=tf.add(idx_var,1)
-                return node_h, node_c, idx_var
-            loop_cond=lambda a1,b1,idx_var: tf.less(idx_var, n_inodes)
-            loop_vars=[inode_h,inode_c,idx_var]
-            inode_h,inode_c,idx_var=tf.while_loop(loop_cond, _recurrence,loop_vars,shape_invariants=[tf.TensorShape([None, self.hidden_dim]),tf.TensorShape([None,self.hidden_dim]), idx_var.get_shape()])
-            return inode_h,inode_c
-
-class bottom_up_lstm(object):
-    def __init__(self,config):
-        self.emb_dim = config.emb_dim
-        self.hidden_dim = config.hidden_dim
-        self.num_emb = config.num_emb
-        self.config=config
-        self.reg=self.config.reg  #regulizer parameter
-        self.degree=config.degree  #  2, the N-ary
-        self.add_placeholders()
-        #maxnodesize * emb_dim
-        emb_leaves = self.add_embedding()
-        self.add_model_variables()
-        self.states_h, self.states_c = self.compute_states(emb_leaves)
-        self.states_h=tf.reshape(self.states_h,[self.n_inodes+self.num_leaves, self.hidden_dim])
-        self.states_c=tf.reshape(self.states_c,[self.n_inodes+self.num_leaves, self.hidden_dim])
-        #[node_num ,hidden_value]
-        #batch_states A tensor list: [batch_size, cur_node_num, hidden_value] node_num: include leaves and internal nodes
-
-        #or we can choose to load embedding from glove
-        #self.emb_mat=np.array([idx2vec[idx] if idx in idx2vec  \
-        #    else np.random.multivariate_normal(np.zeros(config.emb_dim) for idx in range(len(config.vocab_counter))       
-    def add_placeholders(self):       
-        dim2=self.config.maxnodesize #parse tree node的数量
-        self.input = tf.placeholder(tf.int32,[dim2],name='input')
-        self.treestr = tf.placeholder(tf.int32,[dim2,2],name='tree')     
-        self.dropout = tf.placeholder(tf.float32,name='dropout')
-        self.n_inodes = tf.reduce_sum(tf.to_int32(tf.not_equal(self.treestr,-1)),[0,1])
-        #对一个Batch之内的进行枚举sum
-        self.n_inodes = self.n_inodes//2
-        self.num_leaves = tf.reduce_sum(tf.to_int32(tf.not_equal(self.input,-1)),[0])
-    def add_embedding(self):
-        #设置为glove的embedding
-        #embed=np.load('glove{0}_uniform.npy'.format(self.emb_dim))
-        with tf.variable_scope("Embed",regularizer=None):
-            #embedding=tf.get_variable('embedding',[self.num_emb,self.emb_dim],initializer=self.emb_mat, trainable=False)
-            embedding=tf.get_variable('embedding',initializer=self.config.embedding,trainable=False,regularizer=None)
-            ix=tf.to_int32(tf.not_equal(self.input,-1))*self.input
-            emb_tree=tf.nn.embedding_lookup(embedding,ix)
-            #emb_tree [maxnodesize, emb_dim] 
-            #multiplier: [maxnodesize * 1 ]
-            emb_tree=emb_tree*(tf.expand_dims(
-                        tf.to_float(tf.not_equal(self.input,-1)),1))
-            return emb_tree
-    def calc_wt_init(self,fan_in=300):
-        eps=1.0/np.sqrt(fan_in)
-        return eps
-    def add_model_variables(self):
-
-        with tf.variable_scope("btp_Composition",
-                                initializer=
-                                tf.contrib.layers.xavier_initializer(),
-                                regularizer=
-                                tf.contrib.layers.l2_regularizer(self.config.reg
-            )):
-
-            cU = tf.get_variable("cU",[self.emb_dim,2*self.hidden_dim],initializer=tf.random_uniform_initializer(-self.calc_wt_init(),self.calc_wt_init()))
-            cW = tf.get_variable("cW",[self.degree*self.hidden_dim,(self.degree+3)*self.hidden_dim],initializer=tf.random_uniform_initializer(-self.calc_wt_init(self.hidden_dim),self.calc_wt_init(self.hidden_dim)))
-            cb = tf.get_variable("cb",[4*self.hidden_dim],initializer=tf.constant_initializer(0.0),regularizer=tf.contrib.layers.l2_regularizer(0.0))
-
-    def process_leafs(self,emb):
-        #emb: [num_leaves, emd_dim]    
-        with tf.variable_scope("btp_Composition",reuse=True):
-            cU = tf.get_variable("cU",[self.emb_dim,2*self.hidden_dim])
-            cb = tf.get_variable("cb",[4*self.hidden_dim])
-            b = tf.slice(cb,[0],[2*self.hidden_dim])
-            #叶子节点没有input gate和forget gate,需要计算output gate 和Input value
-            #取cb的前 2*hidde_dim 维           
-            #x [emb_dim]
-            def _recurseleaf(x):
-                #[1, emb_dim], [emb_dim, 2*self.hidden_dim]
-                concat_uo = tf.matmul(tf.expand_dims(x,0),cU) + b
-                #把concat_uo切割成
-                #[1*hidden_dim] [1*hidden_dim]
-                u,o = tf.split(axis=1,num_or_size_splits=2,value=concat_uo)
-                o=tf.nn.sigmoid(o)
-                u=tf.nn.tanh(u)
-                c = u#tf.squeeze(u)
-                h = o * tf.nn.tanh(c)
-                hc = tf.concat(axis=1,values=[h,c])
-                hc=tf.squeeze(hc)
-                return hc
-        hc = tf.map_fn(_recurseleaf,emb)
-        #hc [num_leaves, 2*hidden_dim]
-        return hc
-
-    def compute_states(self,emb):
-        #降维度
-        num_leaves = self.num_leaves
-        n_inodes = self.n_inodes
-        embx=tf.gather(emb,tf.range(num_leaves))
-        treestr=tf.gather(self.treestr,tf.range(n_inodes))
-        #treestr [n_inodes, 1 or 2]
-        #[num_leaves, 2*hidden_dim]
-        leaf_hc = self.process_leafs(embx)
-        leaf_h,leaf_c=tf.split(axis=1,num_or_size_splits=2,value=leaf_hc)
-        nodes_h=tf.identity(leaf_h)
-        #[num_leaves, hidden_dim]
-        nodes_c=tf.identity(leaf_c)
-        idx_var=tf.constant(0) #tf.Variable(0,trainable=False)
-        with tf.variable_scope("btp_Composition",reuse=True):
-            # cW 2*hidden（两个子节点的Hidden value, 5*hidden
-            cW = tf.get_variable("cW",[self.degree*self.hidden_dim,(self.degree+3)*self.hidden_dim])
-            cb = tf.get_variable("cb",[4*self.hidden_dim])            
-            bu,bo,bi,bf=tf.split(axis=0,num_or_size_splits=4,value=cb)
-            def _recurrence(node_h,node_c,idx_var):
-                #根据index从Node_h和node_c中取值，并不断更新Node_h和Node_c，保证取的顺序
-                node_info=tf.gather(treestr,idx_var)
-                #node_info shape [1, ]
-                child_h=tf.gather(node_h,node_info)
-                child_c=tf.gather(node_c,node_info)
-                flat_ = tf.reshape(child_h,[-1])
-                #展成1-D vector 
-                #[1* hidden_dim
-                tmp=tf.matmul(tf.expand_dims(flat_,0),cW)                
-                u,o,i,fl,fr=tf.split(axis=1,num_or_size_splits=5,value=tmp)                
-                i=tf.nn.sigmoid(i+bi)
-                o=tf.nn.sigmoid(o+bo)
-                u=tf.nn.tanh(u+bu)
-                fl=tf.nn.sigmoid(fl+bf)
-                fr=tf.nn.sigmoid(fr+bf)
-
-                f=tf.concat(axis=0,values=[fl,fr])
-                
-                c = i * u + tf.reduce_sum(f*child_c,[0])
-
-                h = o * tf.nn.tanh(c)
-                node_h = tf.concat(axis=0,values=[node_h,h])
-                node_c = tf.concat(axis=0,values=[node_c,c])
-                idx_var=tf.add(idx_var,1)
-                return node_h,node_c,idx_var
-            #Returns the truth value of (x < y) element-wise
-            loop_cond = lambda a1,b1,idx_var: tf.less(idx_var,n_inodes)
-            loop_vars=[nodes_h,nodes_c,idx_var]
-            nodes_h,nodes_c,idx_var=tf.while_loop(loop_cond, _recurrence,
-                                                loop_vars,parallel_iterations=10)
-            return nodes_h,nodes_c
-        #[node_num ,hidden_value]
+    def add_variables(self):
+        with tf.variable_scope('projection_layer'):
+            softmax_W=tf.get_variable('softmax_w',[self.config.hidden_dim, 1],initializer=tf.random_normal_initializer(mean=0, stddev=1/self.config.hidden_dim))
+            softmax_b=tf.get_variable('softmax_b',[1], initializer=tf.constant_initializer(0.0))
+        self.global_step=tf.Variable(0, name='global_step', trainable=False)
     def add_training_op(self):
-        pass
+        opt=tr.train.AdagradOptimizer(self.config.lr)
+        train_op=opt.minimize(self.loss)
+        return train_op
+        #self.learning_rate=tf.maximun(1e-5, tf.train.exponential_devay(config.learning_rate, cinfig.global_step, config.lr_deday_steps, config.))
+
+    def get_loss(self, predictions, answer):
+        #predictions: [candidate_answer_num,  hidden_dim]
+        with tf.variable_scope('projection_layer',reuse=True):
+            softmax_w=tf.get_variable('softmax_w')
+            softmax_b=tf.get_variable('softmax_b')
+            scores=tf.matmul(predictions, softmax_w)+softmax_b
+            scores=tf.squeeze(scores) #[candidate_answer_num]
+            scores=tf.expand_dims(scores, 0) #[1, candidate_answer_num]
+            truth=tf.onehot(answer, tf.gather(tf.shape(predictions),0))
+            truth=tf.expand_dims(truth, 0)
+            cross_entropy=tf.nn.softmax_cross_entropy_with_logits(logits=scores, labels=truth)
+            cross_entropy=tf.squeeze(cross_entropy)
+            return cross_entropy
+
+class answer_generation():
+    def __init__(self):
+        self.predicted_list=None
+class attentioned_layer(object):
+    def __init__(self, question_encode, context_encode):
+        self.attentioned_hidden_states=self.get_context_attentioned_hiddens
+        #[sentence_num, node_size, 4*hidden_dim]
+
+    def get_context_attentioned_hiddens(self, question_encode, context_encode):
+        context_constituency=context_encode.sentences_final_states
+        #[sentence_num, node_size, 2* hidden_dim]
+        question_constituency=question_encode.nodes_states
+        question_leaves=question_encode.bp_lstm.num_leaves
+        question_treestr=question_encode.bp_lstm.treestr
+        #[node_size, hidden_dim]
+        sentence_constituency=tf.gather(context_constituency,0)
+        context_attentioned_hiddens=self.get_sentence_attention_values(sentence_constituency, question_constituency, question_leaves, question_treestr)
+        context_attentioned_hiddens=tf.expand_dims(context_attentioned_hiddens)
+        sentence_num=context_encode.sentence_num
+        sentence_id=tf.constant(1)
+        def _recurse_sentence(final_hiddens, sentence_id):
+            sentence_constituency=tf.gather(context_constituency, sentence_id)
+            cur_sentence_states=self.get_sentence_attention_values(sentence_constituency, question_constituency, question_leaves, question_treestr)
+            cur_sentence_states=tf.expand_dims(cur_sentence_states, axis=0)
+            final_hiddens=tf.concat([final_hiddens, cur_sentence_states],axis=0)
+            sentence_id=tf.add(sentence_id, 1)
+            return final_hiddens, sentence_id
+        loop_cond=lambda a1,a2, sentence_idx:tf.less(sentence_id, sentence_num) 
+        loop_vars=[context_attentioned_hiddens,sentence_id]
+        context_attentioned_hiddens, sentence_id=tf.while_loop(loop_cond, _recurse_sentence, loop_vars,
+            shape_invariants=[tf.TensorShape(None,None,4*self.config.hidden_dim),sentence_id.get_shape()])
+        return attentioned_hiddens
+        #[sentence_num, node_size, 4*hidden_dim]
+        #context_constituency_num=tf.shape(context_constituency)
+        # loop all the sentences
+        # loop all the constituency in one sentence
+        # in loop get all the representation of constituency in the context
+        # concate it the original representation generated by context_encode class
+    def get_sentence_attention_values(self, sentence_constituency, question_constituency, question_leaves, question_treestr):
+        # return [nodes_num, 4*hidden_dim]
+        context_constituency=tf.gather(sentence_constituency,0)
+        attentioned_hiddens=self.get_constituency_attention_values(context_constituency, question_constituency, question_leaves, question_treestr)
+        attentioned_hiddens=tf.expand_dims(attentioned_hiddens, 0)
+        sentence_nodes_num=tf.gather(tf.shape(sentence_constituency),0)
+        idx_var=tf.constant(1)
+        def _recurse_context_constituency(attentioned_hiddens, idx_var):
+            context_constituency=tf.gather(sentence_constituency, idx_var)
+            cur_constituency_attentioned_hiddens=self.get_constituency_attention_values(context_constituency, question_constituency, question_leaves, question_treestr)
+            cur_constituency_attentioned_hiddens=tf.expand_dims(attentioned_hiddens, 0)
+            attentioned_hiddens=tf.concat([attentioned_hiddens, cur_constituency_attentioned_hiddens],axis=0)
+            idx_var=tf.add(idx_var,1)
+            return attentioned_hiddens, idx_var
+
+        loop_cond=lambda a1,idx:tf.less(idx, sentence_nodes_sum)
+        loop_vars=[attentioned_hiddens, idx_var]
+        attentioned_hiddens, idx_var=tf.while_loop(loop_cond,_recurse_context_constituency, loop_vars, 
+            shape_invariants=[tf.TensorShape(None, 4*self.hidden_dim), idx_var.get_shape()])
+
+        return attentioned_hiddens
+
+    def get_constituency_attention_values(self, context_constituency, question_constituency, question_leaves, question_treestr):
+        #return [4*hidden_dim]
+        #context_constituency: [2* hidden_dim]
+        q_nodes=tf.gather(tf.shape(question_constituency),0)
+        q_allnodes=tf.range(q_nodes)
+        def _get_score(inx):
+            q_node_hiddens=tf.gather(question_constituency, inx) #[2*hidden_dim]
+            attention_score=tf.reduce_sum(tf.multiply(q_node_hiddens,context_constituency))
+            return attention_score
+        nodes_attentions=tf.map_fn(_get_score, q_nodes)
+        #################neet normalize the attention scores
+        q_leaves=tf.range(question_leaves)
+        def _get_attentional_leaves(inx):
+            hiddens=tf.gather(question_constituency, inx) #[2*hidden_dim]
+            attention_score=tf.gather(nodes_attentions, inx)
+            attentional_leaves=tf.multiply(hiddens, attention_score)
+            return attentional_leaves
+        attentional_representations=tf.map_fn(_get_attentional_leaves, q_leaves)
+        inodes_num=tf.substract(q_nodes,question_leaves)
+        idx_var=tf.constant(0)
+        def _recurse_q_nodes(attentional_representations, idx_var):
+            node_idx=tf.add(idx_var, question_leaves)
+            node_attentional_score=tf.gather(nodes_attentions, node_idx)
+
+            node_hidden=tf.gather()
+            node_children=tf.gather(question_treestr, idx_var) #[2]
+            children_attention_score=tf.gather(nodes_attentions, node_children) #[2]
+            children_attention_score=tf.nn.softmax(children_attention_score)
+            children_attention_score=tf.expand_dims(children_attention_score, axis=0)
+            children_attentional_rep=tf.gather(attentional_representations, node_children) #[2, 2*hidden_dim]
+            children_combine=tf.matmul(children_attention_score, children_attentional_rep) #[1, 2*hidden_dim]
+            children_combine=tf.squeeze(children_combine) #[2* hidden_dim]
+            b=tf.multiply(tf.add(children_combine, context_constituency), node_attentional_score) #[2* hidden_dim]
+            b=tf.expand_dims(b,axis=0)
+            attentional_representations=tf.concat([attentional_representations, b], axis=0)
+            idx_var=tf.add(idx_var, 1)
+            return attentional_reprensentations, idx_var
+        loop_cond=lambda a1, idx:tf.less(idx, inodes_num)
+        loop_vars=[attentional_representations, idx_var]
+        attentional_representations, idx_var=tf.while_loop(loop_cond, _recurse_q_nodes,loop_vars, 
+            shape_invariants=[tf.TensorShape(None, 2*self.hidden_dim), idx_var.get_shape()])
+        root_attentional_representation=tf.gather(attentional_representations, tf.substract(q_nodes,1))
+        concated_attentional_rep=tf.cancat([constituency, root_attentional_representation], axis=0)
+        return concated_attentional_rep
 
 if __name__=='__main__':
     from my_main import Config
@@ -347,6 +207,8 @@ if __name__=='__main__':
     gpu_config = tf.ConfigProto()
     gpu_config.gpu_options.allow_growth = True
     with tf.Session(config=gpu_config) as sess:
-        model = bi_tree_lstm(config)
+        logging.warn('begin build the model')
+        model = ccrc_model(config)
+        logging.warn('model build done')
         sess.run(tf.global_variables_initializer())
 

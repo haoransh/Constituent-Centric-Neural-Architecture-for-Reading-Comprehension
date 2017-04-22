@@ -43,11 +43,20 @@ def load_squad_data():
         for i in sum_counter:
             outfile.write(i+'\n')
     train_trees=[]
+    train_context_trees=[]
     for i in range(len(train_data)):
         train_trees.append(get_tree(train_data[i][0]))
+        cur_context_trees=[]
+        contexts=nltk.sent_tokenize(train_data[i][2])
+        for j in range(len(contexts)):
+            cur_context_trees.append(get_tree(contexts[j]))
+        train_context_trees.append(cur_context_trees)
+        
     for i in range(len(train_data)):
         train_data[i][0]=train_trees[i]
+        train_data[i][2]=train_context_trees[i]
     #train_data[#][0] is the root node of one tree
+    #train_data[#][2] is the root list of the sentence
     data={'train':train_data,'dev':dev_data}
     return data, word2idx, embedding
     
@@ -87,6 +96,7 @@ def prepro_each(args, data_type):
             for sen in xi:
                 for word in sen:
                     word_counter[word]+=len(para['qas'])
+                    
             for qa in para['qas']:
                 q=qa['question']
                 qi=word_tokenize(qa['question'])

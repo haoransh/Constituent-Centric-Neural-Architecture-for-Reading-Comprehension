@@ -25,6 +25,7 @@ class Config(object):
     maxseqlen = 100
     maxnodesize = 300
     trainable_embeddings=True
+    max_candidate_answers=100
     word2idx=None
 
 def train(restore=False):
@@ -33,7 +34,9 @@ def train(restore=False):
     config=Config()
     logging.basicConfig(filename="logger.log",level=logging.WARNING)
     data,word2idx,embedding=load_data.load_squad_data()
-    #data['train']     [#][0] the root node of the question
+    #data['train']  
+    #[#][0] the root node of the question
+    #[#}[2] the root node list of the context
     #embedding is for later usage
     config.embedding=embedding
     config.word2idx=word2idx
@@ -46,7 +49,7 @@ def train(restore=False):
     np.random.seed(42)
     train=data['train']
     logging.warn('the length of train data:{}'.format(len(train)))
-    model=ccrc_model.bi_tree_lstm(config)
+    model=ccrc_model.ccrc_model(config)
     init=tf.initialize_all_variables()
     saver = tf.train.Saver()
     with tf.Session() as sess:
