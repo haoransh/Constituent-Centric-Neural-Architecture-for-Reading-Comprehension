@@ -11,6 +11,7 @@ import glob
 from tf_treenode import tNode,processTree
 import random
 import numpy as np
+import logging
 def load_embedding():
     word2idx={}
     embeddings=[]
@@ -27,7 +28,6 @@ def load_embedding():
 def load_squad_data():
     args=get_args()
     train_data, trainCounter,dev_data, devCounter=prepro(args)
-
     train_qlist=[]
     dev_qlist=[]
     with open('train_q.txt','w+')as qout, open('train_a.txt','w+') as aout, open('train_c.txt','w+') as cout:    
@@ -43,9 +43,13 @@ def load_squad_data():
         for i in sum_counter:
             outfile.write(i+'\n')
     train_trees=[]
+    train_answer=[]
     train_context_trees=[]
     for i in range(len(train_data)):
         train_trees.append(get_tree(train_data[i][0]))
+
+        train_answer=get_word_idx(word_tokenize(train_data[i][1][0])) #consider that only one correct answer in train dataset
+
         cur_context_trees=[]
         contexts=nltk.sent_tokenize(train_data[i][2])
         for j in range(len(contexts)):
@@ -54,12 +58,26 @@ def load_squad_data():
         
     for i in range(len(train_data)):
         train_data[i][0]=train_trees[i]
+        train_data[i][1]=train_answer
         train_data[i][2]=train_context_trees[i]
     #train_data[#][0] is the root node of one tree
+    #train_data[#][1] is the wordidx list of target answer
     #train_data[#][2] is the root list of the sentence
     data={'train':train_data,'dev':dev_data}
     return data, word2idx, embedding
-    
+
+def get_word_idx(word_list, word2idx):
+    idx_list=[]
+    for word in word_list:
+        if word2idx.get(word):
+            idx_list.append(word2idx[word])
+        elif word2idx.get(word.lower()):
+            idx_list.append(word2idx[word.lower()])
+        else:
+            logging.warn('no wordidx for answer:{}'.format(word))
+            idx_list.append(word2idx['unknown'])
+    return idx_list
+
 def get_args():
     parser=argparse.ArgumentParser()
     source_dir='/home2/shr/data/nlp/squad'
@@ -112,7 +130,7 @@ def prepro_each(args, data_type):
     return retdata,word_counter
 
 def word_tokenize(tokens):
-    #tokens是一个句子
+    #tokens is a string(sentence)
     return [token.replace("''",'"').replace('``','"') for token in nltk.word_tokenize(tokens)]
 
 def process_tokens(temp_tokens):
@@ -272,6 +290,7 @@ def BFStree(root, word2idx=None):
                 elif word2idx.get(node.word.lower()):
                     node.word=word2idx[node.word.lower()]
                 else:
+                    logging.warn('no word2idx for question/context {}'.format(node.word))
                     node.word=word2idx['unknown']
             leaves.append(node)
         else:
@@ -285,6 +304,40 @@ def BFStree(root, word2idx=None):
 def get_max_len_data(data):
     train_data=data['train']
     dev_data=data['dev']
+
+def candidate_answer_generate(answer_data, context_sentence_roots_list):
+    #candidate_answers: sentence_num * candidate_number * constituency_num, each is a constituency id list(reversed BFS order)
+    #correct_answer_idx
+    candidate_answers=[]
+    correct_answer_idx=-1
+    candidate_answer_overall_number=0
+    sentence_num=len(context_sentence_roots_list)
+    overall_idx=-1
+    for root in context_sentence_roots_list:
+        overall_idx+=1
+        cur_candidate_answer=[]
+        constituency_id2span={}
+        leaf_num=0
+        queue=deque([node])
+        while queue:
+            node=queue.poplest()
+            if node.children!=[]:
+                candidate_answer_overall_number+=1
+                cur_candidate_answer.append([node.idx])
+                overall_idx+=1
+                queue.extend(node.children)
+                constituency_id2span[node.idx]=node.span
+                if node.get_spans==answer_data:
+                    if correct_answer_idx!=-1:
+                        logging.warn('{} has duplicated candidate answers'.format(root.span))
+                        correct_answer_idx=overall_idx
+                    else:
+                        correct_answer_idx=overall_idx
+
+        candidate_answers.append(cur_candidate_answer)
+
+    return candidate_answers, correct_answer_idx, candidate_answer_overall_number
+
 if __name__ =='__main__':                                                                                                                       
     root=get_tree('Yet the act is still charming here.')
     word2idx,embedding=load_embedding()

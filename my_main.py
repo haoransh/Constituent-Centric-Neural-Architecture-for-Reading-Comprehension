@@ -36,7 +36,8 @@ def train(restore=False):
     data,word2idx,embedding=load_data.load_squad_data()
     #data['train']  
     #[#][0] the root node of the question
-    #[#}[2] the root node list of the context
+    #[#][1] one answer: a word index list
+    #[#][2] the root node list of the context
     #embedding is for later usage
     config.embedding=embedding
     config.word2idx=word2idx
@@ -50,14 +51,14 @@ def train(restore=False):
     train=data['train']
     logging.warn('the length of train data:{}'.format(len(train)))
     model=ccrc_model.ccrc_model(config)
-    init=tf.initialize_all_variables()
+    init=tf.global_variables_initializer()
     saver = tf.train.Saver()
     with tf.Session() as sess:
         sess.run(init)
         start_time=time.time()
         if restore:saver.restore(sess,'./ckpt/tree_rnn_weights')
-        nodes_states=model.train(train,sess)
-                    
+        loss=model.train(train,sess)
+        print('average loss:{}'.format(loss))
 if __name__ == '__main__':
     if len(sys.argv) > 1:
         restore=True
