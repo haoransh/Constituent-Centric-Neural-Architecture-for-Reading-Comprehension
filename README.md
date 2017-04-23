@@ -4,7 +4,16 @@ Implemented in Tensorflow, python3.6
 
 @Author Haoran Shi
 
-I have implemented the bidirectional tree LSTM architecture for question encoding mentioned in **Constituent-Centric Neural Architecture for Reading Comprehension**. And the tree LSTM for context is very similar, but I haven't finished it due to time limit. Because the definition of loss function is related to answer and context representation, the optimization method of the parameters has not been defined.
+Files:
+- Core Model File: ``ccrc_model.py``
+- Sub-modules:
+    - question encoding: ``question_encoding.py``
+    - context encoding: ``context_encoding.py``
+    - attention layer:``attention_layer.py``
+    - data utilities and candidate answers generation:``load_data.py``
+    - answer prediction and parameter learning:``ccrc_model.py``
+
+I have implemented all the modules of the model described in *A constituent-Centric Neural Architecture for Reading Comprehension*, except that some details in candidate answer generation module has not been finished, and the ``load_data.py`` can be optimized by means of generating some intermediate files, instead of reading from original SQuAD dataset.
 
 When building the bottom-up lstm tree of question, I refer to some basic data processing and fundemental architecture of https://github.com/stanfordnlp/treelstm and  https://github.com/shrshore/RecursiveNN
 
@@ -26,7 +35,6 @@ For debugging, I set some constraints in ``load_data.py``, you can see related i
 7. You can check the hidden value representation of root node for every question in ``logger.log`` file
 
 ## Comments
-
 
 Actually there are something confusing me in the original paper in question-encoding part. 
 
